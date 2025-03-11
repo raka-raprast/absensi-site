@@ -1,22 +1,29 @@
 import 'dart:developer';
 
 import 'package:absensi_site/absensi/model/absen_picture.model.dart';
+import 'package:absensi_site/absensi/model/absensi.model.dart';
 import 'package:absensi_site/absensi/model/geopify_location.model.dart';
 import 'package:camera/camera.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:refreshed/refreshed.dart';
-import 'package:geocoding/geocoding.dart';
 
-class PictureController extends GetxController {
+class AbsenDetailController extends GetxController {
   final RxString errorMessage = ''.obs;
   final RxBool isLoading = false.obs, isTakingPicture = false.obs;
   final RxList<AbsenPictureModel> pictures = <AbsenPictureModel>[].obs;
   Rxn<CameraController?> cameraController = Rxn<CameraController?>();
+  Rxn<TextEditingController?> remarksController =
+      Rxn<TextEditingController?>(TextEditingController());
   late List<CameraDescription> _cameras;
   final Rxn<XFile?> pictureFile = Rxn<XFile?>();
   final Rxn<Position?> position = Rxn<Position?>();
   final Rxn<GeopifyLocation?> location = Rxn<GeopifyLocation?>();
+  final bool isMasuk;
+  final AbsensiModel? existingAbsen;
+
+  AbsenDetailController({this.isMasuk = false, this.existingAbsen});
 
   @override
   void onReady() async {
@@ -36,8 +43,16 @@ class PictureController extends GetxController {
   Future<void> _initializeCamera() async {
     try {
       _cameras = await availableCameras();
+
+      // Find the front camera
+      final frontCamera = _cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+        orElse: () => _cameras
+            .first, // Fallback to first camera if no front camera is found
+      );
+
       cameraController.value =
-          CameraController(_cameras[0], ResolutionPreset.max);
+          CameraController(frontCamera, ResolutionPreset.max);
       await cameraController.value?.initialize();
     } catch (e) {
       if (e is CameraException) {
@@ -55,6 +70,44 @@ class PictureController extends GetxController {
     }
   }
 
+  void setCamera(CameraDescription camera) async {
+    cameraController.value?.dispose();
+    cameraController.value = CameraController(camera, ResolutionPreset.medium);
+    await cameraController.value!.initialize();
+  }
+
+  void switchCamera() async {
+    isLoading.value = true;
+    if (_cameras == null || _cameras!.isEmpty) {
+      isLoading.value = false;
+      return;
+    }
+
+    final isUsingFront = cameraController.value?.description.lensDirection ==
+        CameraLensDirection.front;
+    final newCamera = _cameras!.firstWhere(
+      (camera) =>
+          camera.lensDirection ==
+          (isUsingFront ? CameraLensDirection.back : CameraLensDirection.front),
+      orElse: () => _cameras!.first,
+    );
+
+    if (cameraController.value?.description == newCamera) {
+      isLoading.value = false;
+      return; // Prevent unnecessary re-initialization
+    }
+
+    await cameraController.value?.dispose();
+    cameraController.value = CameraController(newCamera, ResolutionPreset.max);
+    isLoading.value = false;
+    try {
+      await cameraController.value!.initialize();
+    } catch (e) {
+      isLoading.value = false;
+      errorMessage.value = 'Error switching camera: $e';
+    }
+  }
+
   void takePictures() async {
     try {
       isTakingPicture.value = true;
@@ -65,6 +118,7 @@ class PictureController extends GetxController {
         position.value = determinedPosition;
         await getAddress();
         isTakingPicture.value = false;
+        Get.back();
       } else {
         isTakingPicture.value = false;
       }
@@ -99,15 +153,6 @@ class PictureController extends GetxController {
     } catch (error) {
       log('Error: $error');
     }
-    // final placemarkResult = await placemarkFromCoordinates(
-    //     position.value!.latitude, position.value!.longitude);
-    // if (placemarkResult.isNotEmpty) {
-    //   log('there');
-    //   placemark.value = placemarkResult.first;
-    // } else {
-    //   log('uhuy');
-    //   return;
-    // }
   }
 
   Future<Position> _determinePosition() async {
